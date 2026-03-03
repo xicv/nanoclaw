@@ -7,6 +7,7 @@ import {
   POLL_INTERVAL,
   TRIGGER_PATTERN,
 } from './config.js';
+import { datePrefix } from './date-utils.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -23,6 +24,7 @@ import {
   ensureContainerRuntimeRunning,
 } from './container-runtime.js';
 import {
+  deleteSession,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -161,7 +163,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages);
+  const prompt = datePrefix() + formatMessages(missedMessages);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -313,6 +315,18 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
+      // If we had a session and it failed, clear it and retry once with a fresh session.
+      // This handles corrupted/incompatible sessions after container rebuilds or SDK updates.
+      if (sessionId) {
+        logger.warn(
+          { group: group.name, sessionId, error: output.error },
+          'Session resume failed, retrying with fresh session',
+        );
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+        return runAgent(group, prompt, chatJid, onOutput);
+      }
+
       logger.error(
         { group: group.name, error: output.error },
         'Container agent error',
@@ -322,6 +336,17 @@ async function runAgent(
 
     return 'success';
   } catch (err) {
+    // Same retry logic for thrown errors (e.g. container crash during resume)
+    if (sessionId) {
+      logger.warn(
+        { group: group.name, sessionId, err },
+        'Session resume threw, retrying with fresh session',
+      );
+      delete sessions[group.folder];
+      deleteSession(group.folder);
+      return runAgent(group, prompt, chatJid, onOutput);
+    }
+
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
   }
@@ -393,17 +418,18 @@ async function startMessageLoop(): Promise<void> {
             lastAgentTimestamp[chatJid] || '',
             ASSISTANT_NAME,
           );
-          const messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend);
+          // Skip if no pending messages — avoids re-sending already-processed
+          // groupMessages which causes duplicate agent responses (#529).
+          if (allPending.length === 0) continue;
+          const formatted = datePrefix() + formatMessages(allPending);
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
-              { chatJid, count: messagesToSend.length },
+              { chatJid, count: allPending.length },
               'Piped messages to active container',
             );
             lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
+              allPending[allPending.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
             channel

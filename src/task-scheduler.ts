@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { datePrefix } from './date-utils.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -20,6 +21,44 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+
+/**
+ * Compute the next run time for a recurring task, anchored to the
+ * task's scheduled time rather than Date.now() to prevent cumulative
+ * drift on interval-based tasks.
+ */
+export function computeNextRun(task: ScheduledTask): string | null {
+  if (task.schedule_type === 'once') return null;
+
+  const now = Date.now();
+
+  if (task.schedule_type === 'cron') {
+    const interval = CronExpressionParser.parse(task.schedule_value, {
+      tz: TIMEZONE,
+    });
+    return interval.next().toISOString();
+  }
+
+  if (task.schedule_type === 'interval') {
+    const ms = parseInt(task.schedule_value, 10);
+    if (!ms || ms <= 0) {
+      logger.warn(
+        { taskId: task.id, value: task.schedule_value },
+        'Invalid interval value',
+      );
+      return new Date(now + 60_000).toISOString();
+    }
+    // Anchor to the scheduled time, not now, to prevent drift.
+    // Skip past any missed intervals so we always land in the future.
+    let next = new Date(task.next_run!).getTime() + ms;
+    while (next <= now) {
+      next += ms;
+    }
+    return new Date(next).toISOString();
+  }
+
+  return null;
+}
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
@@ -131,7 +170,7 @@ async function runTask(
     const output = await runContainerAgent(
       group,
       {
-        prompt: task.prompt,
+        prompt: datePrefix() + task.prompt,
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
@@ -187,17 +226,7 @@ async function runTask(
     error,
   });
 
-  let nextRun: string | null = null;
-  if (task.schedule_type === 'cron') {
-    const interval = CronExpressionParser.parse(task.schedule_value, {
-      tz: TIMEZONE,
-    });
-    nextRun = interval.next().toISOString();
-  } else if (task.schedule_type === 'interval') {
-    const ms = parseInt(task.schedule_value, 10);
-    nextRun = new Date(Date.now() + ms).toISOString();
-  }
-  // 'once' tasks have no next run
+  const nextRun = computeNextRun(task);
 
   const resultSummary = error
     ? `Error: ${error}`
@@ -229,6 +258,13 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         const currentTask = getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
+        }
+
+        // Update next_run BEFORE enqueueing to prevent duplicate runs
+        // (scheduler may poll again before task completes)
+        const nextRun = computeNextRun(currentTask);
+        if (nextRun) {
+          updateTask(currentTask.id, { next_run: nextRun });
         }
 
         deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () =>
