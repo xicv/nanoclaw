@@ -14,6 +14,10 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const PEEKABOO_REQUESTS_DIR = path.join(IPC_DIR, 'peekaboo', 'requests');
+const PEEKABOO_RESPONSES_DIR = path.join(IPC_DIR, 'peekaboo', 'responses');
+const APPLESCRIPT_REQUESTS_DIR = path.join(IPC_DIR, 'applescript', 'requests');
+const APPLESCRIPT_RESPONSES_DIR = path.join(IPC_DIR, 'applescript', 'responses');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -276,6 +280,176 @@ Use available_groups.json to find the JID for a group. The folder name should be
 
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+    };
+  },
+);
+
+server.tool(
+  'peekaboo',
+  `Control the host Mac's GUI via Peekaboo. Captures screenshots, analyzes UI elements, clicks, types, scrolls, and manages windows/apps/menus on the macOS desktop.
+
+WORKFLOW: Always start with "see" to capture a UI snapshot, then use the element IDs from the snapshot to interact.
+
+COMMON COMMANDS:
+• see: Capture and analyze the screen or a specific app window. Returns element IDs you can use with click/type/etc.
+• click: Click an element by its ID from a "see" snapshot
+• type: Type text, optionally targeting an element
+• press: Press special keys (Return, Tab, Escape, etc.)
+• hotkey: Key combos like cmd,c or cmd,shift,t
+• scroll: Scroll up/down/left/right
+• window: Manage windows (close, minimize, maximize, move, resize, focus, list)
+• app: Launch, quit, switch, list applications
+• menu: Click menu items or list menus
+• list: List apps, windows, screens
+• image: Save a screenshot to a file
+
+EXAMPLE - Open Safari and search:
+1. peekaboo(command: "app", args: ["launch", "Safari"])
+2. peekaboo(command: "see", args: ["--app", "Safari"])  → get element IDs
+3. peekaboo(command: "click", args: ["--id", "e5"])  → click search bar
+4. peekaboo(command: "type", args: ["--text", "hello world"])
+5. peekaboo(command: "press", args: ["Return"])
+
+NOTE: This tool bridges to the host macOS via IPC. There is ~1-2 second latency per command. The host must have Peekaboo installed with Screen Recording + Accessibility permissions granted.`,
+  {
+    command: z.string().describe('Peekaboo subcommand: see, click, type, press, hotkey, scroll, window, app, menu, list, image, paste, swipe, drag, move, menubar, dock, dialog, space, open, sleep, capture, permissions'),
+    args: z.array(z.string()).optional().describe('Arguments for the command (e.g., ["--app", "Safari"] for see, ["--id", "e5"] for click, ["--text", "hello"] for type)'),
+  },
+  async (toolArgs) => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const request = {
+      requestId,
+      command: toolArgs.command,
+      args: toolArgs.args || [],
+      timestamp: new Date().toISOString(),
+    };
+
+    // Write request with requestId as filename so host can match response
+    fs.mkdirSync(PEEKABOO_REQUESTS_DIR, { recursive: true });
+    const requestPath = path.join(PEEKABOO_REQUESTS_DIR, `${requestId}.json`);
+    const tempPath = `${requestPath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(request, null, 2));
+    fs.renameSync(tempPath, requestPath);
+
+    // Poll for response (timeout after 35 seconds)
+    const responsePath = path.join(PEEKABOO_RESPONSES_DIR, `${requestId}.json`);
+    const pollInterval = 200;
+    const maxWait = 35_000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(responsePath)) {
+        try {
+          const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+          // Clean up response file
+          try { fs.unlinkSync(responsePath); } catch { /* ignore */ }
+
+          if (response.status === 'error') {
+            return {
+              content: [{ type: 'text' as const, text: `Peekaboo error: ${response.error}` }],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{ type: 'text' as const, text: response.output || 'Command completed (no output).' }],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Failed to parse Peekaboo response: ${err instanceof Error ? err.message : String(err)}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Peekaboo command timed out after 35 seconds. The host may not have Peekaboo installed or the IPC handler may not be running.' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'apple_reminders_notes',
+  `Create and manage macOS Reminders and Notes on the host Mac.
+
+COMMANDS:
+• reminders_create: Create a reminder. Params: title (required), list, due_date (ISO local: "2026-03-04T15:30:00"), notes, priority (none/low/medium/high)
+• reminders_list: List reminders. Params: list, include_completed (boolean)
+• reminders_complete: Mark a reminder done. Params: reminder_id (required)
+• reminders_delete: Delete a reminder. Params: reminder_id (required)
+• reminders_list_lists: List all reminder lists. No params.
+• notes_create: Create a note. Params: title (required), body, folder
+• notes_list: List notes. Params: folder, limit (1-100, default 20)
+• notes_get: Get a note's content. Params: note_id (required)
+• notes_list_folders: List all note folders. No params.
+
+EXAMPLES:
+  apple_reminders_notes(command: "reminders_create", params: {title: "Buy groceries", due_date: "2026-03-04T17:00:00", priority: "high"})
+  apple_reminders_notes(command: "notes_create", params: {title: "Meeting Notes", body: "Discussed project timeline"})
+  apple_reminders_notes(command: "reminders_list", params: {list: "Shopping"})
+
+NOTE: This tool bridges to the host macOS via IPC. There is ~1-2 second latency per command.`,
+  {
+    command: z.string().describe('Command to execute (e.g., "reminders_create", "notes_list")'),
+    params: z.record(z.string(), z.unknown()).optional().describe('Parameters for the command (varies by command)'),
+  },
+  async (toolArgs) => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const request = {
+      requestId,
+      command: toolArgs.command,
+      params: toolArgs.params || {},
+      timestamp: new Date().toISOString(),
+    };
+
+    // Write request with requestId as filename so host can match response
+    fs.mkdirSync(APPLESCRIPT_REQUESTS_DIR, { recursive: true });
+    const requestPath = path.join(APPLESCRIPT_REQUESTS_DIR, `${requestId}.json`);
+    const tempPath = `${requestPath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(request, null, 2));
+    fs.renameSync(tempPath, requestPath);
+
+    // Poll for response (timeout after 35 seconds)
+    const responsePath = path.join(APPLESCRIPT_RESPONSES_DIR, `${requestId}.json`);
+    const pollInterval = 200;
+    const maxWait = 35_000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(responsePath)) {
+        try {
+          const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+          // Clean up response file
+          try { fs.unlinkSync(responsePath); } catch { /* ignore */ }
+
+          if (response.status === 'error') {
+            return {
+              content: [{ type: 'text' as const, text: `AppleScript error: ${response.error}` }],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{ type: 'text' as const, text: response.output || 'Command completed (no output).' }],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Failed to parse AppleScript response: ${err instanceof Error ? err.message : String(err)}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'AppleScript command timed out after 35 seconds. The host IPC handler may not be running.' }],
+      isError: true,
     };
   },
 );

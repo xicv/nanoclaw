@@ -156,15 +156,29 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'peekaboo', 'requests'), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(groupIpcDir, 'peekaboo', 'responses'), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(groupIpcDir, 'applescript', 'requests'), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(groupIpcDir, 'applescript', 'responses'), {
+    recursive: true,
+  });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
   });
 
-  // Copy agent-runner source into a per-group writable location so agents
+  // Sync agent-runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other
   // groups. Recompiled on container startup via entrypoint.sh.
+  // Always sync core files from upstream to pick up new MCP tools/fixes,
+  // while preserving any agent-added customizations in other files.
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
@@ -177,8 +191,15 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  if (fs.existsSync(agentRunnerSrc)) {
+    fs.mkdirSync(groupAgentRunnerDir, { recursive: true });
+    // Sync upstream source files (overwrite with latest)
+    for (const file of fs.readdirSync(agentRunnerSrc)) {
+      const srcFile = path.join(agentRunnerSrc, file);
+      if (fs.statSync(srcFile).isFile()) {
+        fs.copyFileSync(srcFile, path.join(groupAgentRunnerDir, file));
+      }
+    }
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
