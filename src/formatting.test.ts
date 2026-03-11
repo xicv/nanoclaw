@@ -146,7 +146,11 @@ describe('formatMessages with attachments', () => {
       makeMsg({
         content: 'No size',
         attachments: [
-          { id: 'x:media:1', filename: 'f.bin', mimetype: 'application/octet-stream' },
+          {
+            id: 'x:media:1',
+            filename: 'f.bin',
+            mimetype: 'application/octet-stream',
+          },
         ],
       }),
     ]);
@@ -172,7 +176,12 @@ describe('formatMessages with attachments', () => {
         id: '2',
         content: 'with media',
         attachments: [
-          { id: 'w:media:1', filename: 'pic.png', mimetype: 'image/png', size: 100 },
+          {
+            id: 'w:media:1',
+            filename: 'pic.png',
+            mimetype: 'image/png',
+            size: 100,
+          },
         ],
       }),
     ]);

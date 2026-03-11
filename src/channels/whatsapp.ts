@@ -238,15 +238,14 @@ export class WhatsAppChannel implements Channel {
               sender,
               timestamp,
               ref: {
-                mediaKey: Buffer.from(
-                  mediaMsg.mediaKey as Uint8Array,
-                ).toString('base64'),
+                mediaKey: Buffer.from(mediaMsg.mediaKey as Uint8Array).toString(
+                  'base64',
+                ),
                 directPath: mediaMsg.directPath,
                 url: mediaMsg.url,
                 downloadType,
               },
-              caption:
-                (mediaMsg as { caption?: string }).caption || undefined,
+              caption: (mediaMsg as { caption?: string }).caption || undefined,
               mediaType: type,
             });
             break;

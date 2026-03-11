@@ -39,9 +39,8 @@ describe('wrapChannelWithNotifications', () => {
   });
 
   it('preserves all Channel interface methods', async () => {
-    const { wrapChannelWithNotifications } = await import(
-      './outbound-notify.js'
-    );
+    const { wrapChannelWithNotifications } =
+      await import('./outbound-notify.js');
     const original = makeChannel();
     const wrapped = wrapChannelWithNotifications(original);
 
@@ -60,9 +59,8 @@ describe('wrapChannelWithNotifications', () => {
   });
 
   it('calls original sendMessage and fires notification', async () => {
-    const { wrapChannelWithNotifications } = await import(
-      './outbound-notify.js'
-    );
+    const { wrapChannelWithNotifications } =
+      await import('./outbound-notify.js');
     const original = makeChannel();
     const wrapped = wrapChannelWithNotifications(original);
 
@@ -71,9 +69,8 @@ describe('wrapChannelWithNotifications', () => {
   });
 
   it('does not throw when notification fails', async () => {
-    const { wrapChannelWithNotifications } = await import(
-      './outbound-notify.js'
-    );
+    const { wrapChannelWithNotifications } =
+      await import('./outbound-notify.js');
     const original = makeChannel();
     const wrapped = wrapChannelWithNotifications(original);
 
@@ -92,12 +89,9 @@ describe('wrapChannelWithNotifications', () => {
 
 describe('setGroupNameResolver', () => {
   it('uses custom resolver for group names', async () => {
-    const { setGroupNameResolver, notifyOutbound } = await import(
-      './outbound-notify.js'
-    );
-    setGroupNameResolver((jid) =>
-      jid === 'abc@g.us' ? 'My Group' : jid,
-    );
+    const { setGroupNameResolver, notifyOutbound } =
+      await import('./outbound-notify.js');
+    setGroupNameResolver((jid) => (jid === 'abc@g.us' ? 'My Group' : jid));
 
     // notifyOutbound is fire-and-forget; just verify it doesn't throw
     await expect(
@@ -106,9 +100,8 @@ describe('setGroupNameResolver', () => {
   });
 
   it('falls back to JID when resolver returns JID', async () => {
-    const { setGroupNameResolver, notifyOutbound } = await import(
-      './outbound-notify.js'
-    );
+    const { setGroupNameResolver, notifyOutbound } =
+      await import('./outbound-notify.js');
     setGroupNameResolver((jid) => jid);
 
     await expect(

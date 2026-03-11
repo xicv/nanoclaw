@@ -39,10 +39,7 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
-async function notifyTelegram(
-  groupName: string,
-  text: string,
-): Promise<void> {
+async function notifyTelegram(groupName: string, text: string): Promise<void> {
   if (!TELEGRAM_CHAT_ID || !TELEGRAM_BOT_TOKEN) return;
 
   const body = truncate(text, 4000);
@@ -63,17 +60,11 @@ async function notifyTelegram(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    logger.warn(
-      { status: res.status, body },
-      'Telegram notification failed',
-    );
+    logger.warn({ status: res.status, body }, 'Telegram notification failed');
   }
 }
 
-async function notifyMacOS(
-  groupName: string,
-  text: string,
-): Promise<void> {
+async function notifyMacOS(groupName: string, text: string): Promise<void> {
   if (!MACOS_ENABLED || os.platform() !== 'darwin') return;
 
   const preview = truncate(text, 100);

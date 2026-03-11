@@ -357,13 +357,15 @@ function buildMusicPlay(params: Record<string, unknown>): string[] {
     lines.push('set t to item 1 of results');
     lines.push('return "Playing: " & name of t & " by " & artist of t');
     lines.push('else');
-    lines.push(`return "No tracks found for: ${escapeAppleScriptString(track)}"`);
+    lines.push(
+      `return "No tracks found for: ${escapeAppleScriptString(track)}"`,
+    );
     lines.push('end if');
   } else if (playlist) {
+    lines.push(`play playlist "${escapeAppleScriptString(playlist)}"`);
     lines.push(
-      `play playlist "${escapeAppleScriptString(playlist)}"`,
+      `return "Playing playlist: ${escapeAppleScriptString(playlist)}"`,
     );
-    lines.push(`return "Playing playlist: ${escapeAppleScriptString(playlist)}"`);
   } else {
     lines.push('play');
     lines.push('return "Playback resumed"');
@@ -373,21 +375,11 @@ function buildMusicPlay(params: Record<string, unknown>): string[] {
 }
 
 function buildMusicPause(): string[] {
-  return [
-    'tell application "Music"',
-    'pause',
-    'return "Paused"',
-    'end tell',
-  ];
+  return ['tell application "Music"', 'pause', 'return "Paused"', 'end tell'];
 }
 
 function buildMusicStop(): string[] {
-  return [
-    'tell application "Music"',
-    'stop',
-    'return "Stopped"',
-    'end tell',
-  ];
+  return ['tell application "Music"', 'stop', 'return "Stopped"', 'end tell'];
 }
 
 function buildMusicNext(): string[] {

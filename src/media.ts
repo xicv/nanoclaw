@@ -142,7 +142,12 @@ export function getMediaFilePath(
     if (fs.existsSync(directPath)) return directPath;
   }
   const files = fs.readdirSync(dir);
-  const match = files.find((f) => f.startsWith(`${uid}.`) && !f.endsWith('.error') && !f.endsWith('.downloading'));
+  const match = files.find(
+    (f) =>
+      f.startsWith(`${uid}.`) &&
+      !f.endsWith('.error') &&
+      !f.endsWith('.downloading'),
+  );
   return match ? path.join(dir, match) : null;
 }
 
@@ -186,10 +191,7 @@ export function getDownloadError(
 
 const DOWNLOADING_EXPIRY_MS = 5 * 60 * 1000;
 
-export function isDownloading(
-  groupFolder: string,
-  mediaId: string,
-): boolean {
+export function isDownloading(groupFolder: string, mediaId: string): boolean {
   const dir = resolveMediaDir(groupFolder);
   const uid = mediaIdToFilename(mediaId);
   const sentinelPath = path.join(dir, `${uid}.downloading`);
@@ -206,10 +208,7 @@ export function isDownloading(
   }
 }
 
-export function markDownloading(
-  groupFolder: string,
-  mediaId: string,
-): void {
+export function markDownloading(groupFolder: string, mediaId: string): void {
   const dir = resolveMediaDir(groupFolder);
   fs.mkdirSync(dir, { recursive: true });
   const uid = mediaIdToFilename(mediaId);
@@ -217,10 +216,7 @@ export function markDownloading(
   fs.writeFileSync(sentinelPath, new Date().toISOString());
 }
 
-export function clearDownloading(
-  groupFolder: string,
-  mediaId: string,
-): void {
+export function clearDownloading(groupFolder: string, mediaId: string): void {
   const dir = resolveMediaDir(groupFolder);
   const uid = mediaIdToFilename(mediaId);
   const sentinelPath = path.join(dir, `${uid}.downloading`);
@@ -244,7 +240,8 @@ export function cleanupSentinels(): void {
     try {
       if (!fs.statSync(dir).isDirectory()) continue;
       for (const file of fs.readdirSync(dir)) {
-        if (!file.endsWith('.error') && !file.endsWith('.downloading')) continue;
+        if (!file.endsWith('.error') && !file.endsWith('.downloading'))
+          continue;
         const filePath = path.join(dir, file);
         try {
           const stat = fs.statSync(filePath);

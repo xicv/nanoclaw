@@ -4,7 +4,13 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, MAX_MEDIA_SIZE, MEDIA_DIR, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  IPC_POLL_INTERVAL,
+  MAX_MEDIA_SIZE,
+  MEDIA_DIR,
+  TIMEZONE,
+} from './config.js';
 import {
   ALLOWED_APPLESCRIPT_COMMANDS,
   buildAppleScript,
@@ -86,7 +92,11 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
-  sendMedia: (jid: string, filePath: string, options?: MediaSendOptions) => Promise<void>;
+  sendMedia: (
+    jid: string,
+    filePath: string,
+    options?: MediaSendOptions,
+  ) => Promise<void>;
   downloadMedia: (groupFolder: string, mediaId: string) => Promise<void>;
 }
 
@@ -958,10 +968,7 @@ export async function processTaskIpc(
       if (data.containerFilePath && data.chatJid) {
         // Authorization: same pattern as text messages
         const targetGroup = registeredGroups[data.chatJid];
-        if (
-          isMain ||
-          (targetGroup && targetGroup.folder === sourceGroup)
-        ) {
+        if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
           const hostPath = resolveContainerMediaPath(
             data.containerFilePath,
             sourceGroup,

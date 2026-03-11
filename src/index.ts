@@ -591,19 +591,33 @@ async function main(): Promise<void> {
       const channelName = mediaId.split(':')[0];
       const channel = channels.find((c) => c.name === channelName);
       if (!channel?.downloadMedia) {
-        throw new Error(`Channel ${channelName} does not support media download`);
+        throw new Error(
+          `Channel ${channelName} does not support media download`,
+        );
       }
       // Opt 5: 5-minute download timeout
       const DOWNLOAD_TIMEOUT = 5 * 60 * 1000;
       const buffer = await Promise.race([
         channel.downloadMedia(ref.ref),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Download timed out after 5 minutes: ${mediaId}`)), DOWNLOAD_TIMEOUT),
+          setTimeout(
+            () =>
+              reject(
+                new Error(`Download timed out after 5 minutes: ${mediaId}`),
+              ),
+            DOWNLOAD_TIMEOUT,
+          ),
         ),
       ]);
       if (buffer.length > MAX_MEDIA_SIZE) {
-        writeDownloadError(groupFolder, mediaId, `File too large: ${buffer.length} bytes (max ${MAX_MEDIA_SIZE})`);
-        throw new Error(`Media ${mediaId} exceeds MAX_MEDIA_SIZE (${buffer.length} > ${MAX_MEDIA_SIZE})`);
+        writeDownloadError(
+          groupFolder,
+          mediaId,
+          `File too large: ${buffer.length} bytes (max ${MAX_MEDIA_SIZE})`,
+        );
+        throw new Error(
+          `Media ${mediaId} exceeds MAX_MEDIA_SIZE (${buffer.length} > ${MAX_MEDIA_SIZE})`,
+        );
       }
       const ext = getExtFromMime(ref.mimetype);
       saveMediaFile(groupFolder, mediaId, buffer, ext);
