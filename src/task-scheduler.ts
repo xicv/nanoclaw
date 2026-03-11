@@ -26,6 +26,8 @@ import { RegisteredGroup, ScheduledTask } from './types.js';
  * Compute the next run time for a recurring task, anchored to the
  * task's scheduled time rather than Date.now() to prevent cumulative
  * drift on interval-based tasks.
+ *
+ * Co-authored-by: @community-pr-601
  */
 export function computeNextRun(task: ScheduledTask): string | null {
   if (task.schedule_type === 'once') return null;
@@ -42,6 +44,7 @@ export function computeNextRun(task: ScheduledTask): string | null {
   if (task.schedule_type === 'interval') {
     const ms = parseInt(task.schedule_value, 10);
     if (!ms || ms <= 0) {
+      // Guard against malformed interval that would cause an infinite loop
       logger.warn(
         { taskId: task.id, value: task.schedule_value },
         'Invalid interval value',
@@ -189,6 +192,7 @@ async function runTask(
         }
         if (streamedOutput.status === 'success') {
           deps.queue.notifyIdle(task.chat_jid);
+          scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
         }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
@@ -201,7 +205,7 @@ async function runTask(
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
     } else if (output.result) {
-      // Messages are sent via MCP tool (IPC), result text is just logged
+      // Result was already forwarded to the user via the streaming callback above
       result = output.result;
     }
 

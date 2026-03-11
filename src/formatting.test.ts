@@ -58,13 +58,14 @@ describe('escapeXml', () => {
 // --- formatMessages ---
 
 describe('formatMessages', () => {
-  it('formats a single message as XML', () => {
-    const result = formatMessages([makeMsg()]);
-    expect(result).toBe(
-      '<messages>\n' +
-        '<message sender="Alice" time="2024-01-01T00:00:00.000Z">hello</message>\n' +
-        '</messages>',
-    );
+  const TZ = 'UTC';
+
+  it('formats a single message as XML with context header', () => {
+    const result = formatMessages([makeMsg()], TZ);
+    expect(result).toContain('<context timezone="UTC" />');
+    expect(result).toContain('<message sender="Alice"');
+    expect(result).toContain('>hello</message>');
+    expect(result).toContain('Jan 1, 2024');
   });
 
   it('formats multiple messages', () => {
@@ -73,11 +74,16 @@ describe('formatMessages', () => {
         id: '1',
         sender_name: 'Alice',
         content: 'hi',
-        timestamp: 't1',
+        timestamp: '2024-01-01T00:00:00.000Z',
       }),
-      makeMsg({ id: '2', sender_name: 'Bob', content: 'hey', timestamp: 't2' }),
+      makeMsg({
+        id: '2',
+        sender_name: 'Bob',
+        content: 'hey',
+        timestamp: '2024-01-01T01:00:00.000Z',
+      }),
     ];
-    const result = formatMessages(msgs);
+    const result = formatMessages(msgs, TZ);
     expect(result).toContain('sender="Alice"');
     expect(result).toContain('sender="Bob"');
     expect(result).toContain('>hi</message>');
@@ -85,28 +91,43 @@ describe('formatMessages', () => {
   });
 
   it('escapes special characters in sender names', () => {
-    const result = formatMessages([makeMsg({ sender_name: 'A & B <Co>' })]);
+    const result = formatMessages([makeMsg({ sender_name: 'A & B <Co>' })], TZ);
     expect(result).toContain('sender="A &amp; B &lt;Co&gt;"');
   });
 
   it('escapes special characters in content', () => {
-    const result = formatMessages([
-      makeMsg({ content: '<script>alert("xss")</script>' }),
-    ]);
+    const result = formatMessages(
+      [makeMsg({ content: '<script>alert("xss")</script>' })],
+      TZ,
+    );
     expect(result).toContain(
       '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;',
     );
   });
 
   it('handles empty array', () => {
-    const result = formatMessages([]);
-    expect(result).toBe('<messages>\n\n</messages>');
+    const result = formatMessages([], TZ);
+    expect(result).toContain('<context timezone="UTC" />');
+    expect(result).toContain('<messages>\n\n</messages>');
+  });
+
+  it('converts timestamps to local time for given timezone', () => {
+    // 2024-01-01T18:30:00Z in America/New_York (EST) = 1:30 PM
+    const result = formatMessages(
+      [makeMsg({ timestamp: '2024-01-01T18:30:00.000Z' })],
+      'America/New_York',
+    );
+    expect(result).toContain('1:30');
+    expect(result).toContain('PM');
+    expect(result).toContain('<context timezone="America/New_York" />');
   });
 });
 
 // --- formatMessages with attachments ---
 
 describe('formatMessages with attachments', () => {
+  const TZ = 'UTC';
+
   it('includes attachment elements with size', () => {
     const result = formatMessages([
       makeMsg({
@@ -120,7 +141,7 @@ describe('formatMessages with attachments', () => {
           },
         ],
       }),
-    ]);
+    ], TZ);
     expect(result).toContain('<attachment id="whatsapp:media:123"');
     expect(result).toContain('name="photo.jpg"');
     expect(result).toContain('type="image/jpeg"');
@@ -136,7 +157,7 @@ describe('formatMessages with attachments', () => {
           { id: 'a:media:2', filename: 'b.pdf', mimetype: 'application/pdf' },
         ],
       }),
-    ]);
+    ], TZ);
     expect(result).toContain('id="a:media:1"');
     expect(result).toContain('id="a:media:2"');
   });
@@ -153,7 +174,7 @@ describe('formatMessages with attachments', () => {
           },
         ],
       }),
-    ]);
+    ], TZ);
     expect(result).not.toContain('size=');
   });
 
@@ -165,7 +186,7 @@ describe('formatMessages with attachments', () => {
           { id: 'x:media:1', filename: 'a&b<c>.jpg', mimetype: 'image/jpeg' },
         ],
       }),
-    ]);
+    ], TZ);
     expect(result).toContain('name="a&amp;b&lt;c&gt;.jpg"');
   });
 
@@ -184,7 +205,7 @@ describe('formatMessages with attachments', () => {
           },
         ],
       }),
-    ]);
+    ], TZ);
     expect(result).toContain('>plain text</message>');
     expect(result).toContain('<attachment id="w:media:1"');
   });

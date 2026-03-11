@@ -1,4 +1,5 @@
 import { Channel, NewMessage } from './types.js';
+import { formatLocalTime } from './timezone.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
@@ -9,8 +10,12 @@ export function escapeXml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-export function formatMessages(messages: NewMessage[]): string {
+export function formatMessages(
+  messages: NewMessage[],
+  timezone: string,
+): string {
   const lines = messages.map((m) => {
+    const displayTime = formatLocalTime(m.timestamp, timezone);
     let body = escapeXml(m.content);
     if (m.attachments?.length) {
       const atts = m.attachments.map((att) => {
@@ -19,9 +24,12 @@ export function formatMessages(messages: NewMessage[]): string {
       });
       body += atts.join('');
     }
-    return `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${body}</message>`;
+    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">${body}</message>`;
   });
-  return `<messages>\n${lines.join('\n')}\n</messages>`;
+
+  const header = `<context timezone="${escapeXml(timezone)}" />\n`;
+
+  return `${header}<messages>\n${lines.join('\n')}\n</messages>`;
 }
 
 export function stripInternalTags(text: string): string {
