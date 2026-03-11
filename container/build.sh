@@ -8,12 +8,17 @@ cd "$SCRIPT_DIR"
 
 IMAGE_NAME="nanoclaw-agent"
 TAG="${1:-latest}"
-CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-container}"
 
 echo "Building NanoClaw agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
 
-${CONTAINER_RUNTIME} build -t "${IMAGE_NAME}:${TAG}" .
+DNS_FLAGS=""
+if [ "${CONTAINER_RUNTIME}" = "container" ]; then
+  DNS_FLAGS="--dns 8.8.8.8 --dns 1.1.1.1"
+fi
+
+${CONTAINER_RUNTIME} build ${DNS_FLAGS} -t "${IMAGE_NAME}:${TAG}" .
 
 echo ""
 echo "Build complete!"

@@ -8,7 +8,6 @@ import {
   POLL_INTERVAL,
   TRIGGER_PATTERN,
 } from './config.js';
-import { datePrefix } from './date-utils.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -25,7 +24,6 @@ import {
   ensureContainerRuntimeRunning,
 } from './container-runtime.js';
 import {
-  deleteSession,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -50,10 +48,6 @@ import {
   saveMediaFile,
   writeDownloadError,
 } from './media.js';
-import {
-  setGroupNameResolver,
-  wrapChannelWithNotifications,
-} from './outbound-notify.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
@@ -175,7 +169,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = datePrefix() + formatMessages(missedMessages);
+  const prompt = formatMessages(missedMessages);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -327,18 +321,6 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
-      // If we had a session and it failed, clear it and retry once with a fresh session.
-      // This handles corrupted/incompatible sessions after container rebuilds or SDK updates.
-      if (sessionId) {
-        logger.warn(
-          { group: group.name, sessionId, error: output.error },
-          'Session resume failed, retrying with fresh session',
-        );
-        delete sessions[group.folder];
-        deleteSession(group.folder);
-        return runAgent(group, prompt, chatJid, onOutput);
-      }
-
       logger.error(
         { group: group.name, error: output.error },
         'Container agent error',
@@ -348,17 +330,6 @@ async function runAgent(
 
     return 'success';
   } catch (err) {
-    // Same retry logic for thrown errors (e.g. container crash during resume)
-    if (sessionId) {
-      logger.warn(
-        { group: group.name, sessionId, err },
-        'Session resume threw, retrying with fresh session',
-      );
-      delete sessions[group.folder];
-      deleteSession(group.folder);
-      return runAgent(group, prompt, chatJid, onOutput);
-    }
-
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
   }
@@ -430,18 +401,17 @@ async function startMessageLoop(): Promise<void> {
             lastAgentTimestamp[chatJid] || '',
             ASSISTANT_NAME,
           );
-          // Skip if no pending messages — avoids re-sending already-processed
-          // groupMessages which causes duplicate agent responses (#529).
-          if (allPending.length === 0) continue;
-          const formatted = datePrefix() + formatMessages(allPending);
+          const messagesToSend =
+            allPending.length > 0 ? allPending : groupMessages;
+          const formatted = formatMessages(messagesToSend);
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
-              { chatJid, count: allPending.length },
+              { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
             lastAgentTimestamp[chatJid] =
-              allPending[allPending.length - 1].timestamp;
+              messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
             channel
@@ -490,7 +460,6 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
-  setGroupNameResolver((jid) => registeredGroups[jid]?.name || jid);
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
@@ -528,7 +497,7 @@ async function main(): Promise<void> {
       );
       continue;
     }
-    channels.push(wrapChannelWithNotifications(channel));
+    channels.push(channel);
     await channel.connect();
   }
   if (channels.length === 0) {
@@ -593,14 +562,7 @@ async function main(): Promise<void> {
       if (!channel?.downloadMedia) {
         throw new Error(`Channel ${channelName} does not support media download`);
       }
-      // Opt 5: 5-minute download timeout
-      const DOWNLOAD_TIMEOUT = 5 * 60 * 1000;
-      const buffer = await Promise.race([
-        channel.downloadMedia(ref.ref),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Download timed out after 5 minutes: ${mediaId}`)), DOWNLOAD_TIMEOUT),
-        ),
-      ]);
+      const buffer = await channel.downloadMedia(ref.ref);
       if (buffer.length > MAX_MEDIA_SIZE) {
         writeDownloadError(groupFolder, mediaId, `File too large: ${buffer.length} bytes (max ${MAX_MEDIA_SIZE})`);
         throw new Error(`Media ${mediaId} exceeds MAX_MEDIA_SIZE (${buffer.length} > ${MAX_MEDIA_SIZE})`);

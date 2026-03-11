@@ -36,8 +36,10 @@ export function validateStringParam(
     if (required) throw new Error(`Missing required parameter: ${key}`);
     return undefined;
   }
-  if (typeof val !== 'string') throw new Error(`Parameter "${key}" must be a string`);
-  if (val.length > maxLen) throw new Error(`Parameter "${key}" exceeds max length of ${maxLen}`);
+  if (typeof val !== 'string')
+    throw new Error(`Parameter "${key}" must be a string`);
+  if (val.length > maxLen)
+    throw new Error(`Parameter "${key}" exceeds max length of ${maxLen}`);
   return val;
 }
 
@@ -55,7 +57,8 @@ function validateNumberParam(
   }
   const num = typeof val === 'number' ? val : Number(val);
   if (isNaN(num)) throw new Error(`Parameter "${key}" must be a number`);
-  if (num < min || num > max) throw new Error(`Parameter "${key}" must be between ${min} and ${max}`);
+  if (num < min || num > max)
+    throw new Error(`Parameter "${key}" must be between ${min} and ${max}`);
   return num;
 }
 
@@ -74,6 +77,7 @@ function validateBooleanParam(
 // ---------- Allowed commands ----------
 
 export const ALLOWED_APPLESCRIPT_COMMANDS = new Set([
+  'notification',
   'reminders_create',
   'reminders_list',
   'reminders_complete',
@@ -83,6 +87,19 @@ export const ALLOWED_APPLESCRIPT_COMMANDS = new Set([
   'notes_list',
   'notes_get',
   'notes_list_folders',
+  'music_play',
+  'music_pause',
+  'music_stop',
+  'music_next',
+  'music_previous',
+  'music_status',
+  'music_volume',
+  'music_search',
+  'music_queue',
+  'music_playlist_list',
+  'music_playlist_play',
+  'music_shuffle',
+  'music_repeat',
 ]);
 
 // ---------- Priority mapping ----------
@@ -114,8 +131,13 @@ function buildRemindersCreate(params: Record<string, unknown>): string[] {
 
   if (dueDate) {
     // Parse ISO local date: 2026-03-04T15:30:00
-    const match = dueDate.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-    if (!match) throw new Error(`Invalid due_date format: "${dueDate}". Use ISO local: YYYY-MM-DDTHH:MM:SS`);
+    const match = dueDate.match(
+      /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/,
+    );
+    if (!match)
+      throw new Error(
+        `Invalid due_date format: "${dueDate}". Use ISO local: YYYY-MM-DDTHH:MM:SS`,
+      );
     const [, yr, mo, dy, hr, mn, sc] = match;
     // Use locale-safe date components
     lines.push(`set dueD to current date`);
@@ -134,11 +156,16 @@ function buildRemindersCreate(params: Record<string, unknown>): string[] {
 
   if (priorityStr) {
     const p = PRIORITY_MAP[priorityStr.toLowerCase()];
-    if (p === undefined) throw new Error(`Invalid priority: "${priorityStr}". Use: none, low, medium, high`);
+    if (p === undefined)
+      throw new Error(
+        `Invalid priority: "${priorityStr}". Use: none, low, medium, high`,
+      );
     if (p > 0) props.push(`priority:${p}`);
   }
 
-  lines.push(`set newReminder to make new reminder in ${listRef} with properties {${props.join(', ')}}`);
+  lines.push(
+    `set newReminder to make new reminder in ${listRef} with properties {${props.join(', ')}}`,
+  );
   lines.push(`return id of newReminder`);
   lines.push('end tell');
   return lines;
@@ -146,7 +173,8 @@ function buildRemindersCreate(params: Record<string, unknown>): string[] {
 
 function buildRemindersList(params: Record<string, unknown>): string[] {
   const list = validateStringParam(params, 'list', 200, false);
-  const includeCompleted = validateBooleanParam(params, 'include_completed') ?? false;
+  const includeCompleted =
+    validateBooleanParam(params, 'include_completed') ?? false;
 
   const lines: string[] = ['tell application "Reminders"'];
 
@@ -157,7 +185,9 @@ function buildRemindersList(params: Record<string, unknown>): string[] {
   if (includeCompleted) {
     lines.push(`set rems to every reminder of ${listRef}`);
   } else {
-    lines.push(`set rems to (every reminder of ${listRef} whose completed is false)`);
+    lines.push(
+      `set rems to (every reminder of ${listRef} whose completed is false)`,
+    );
   }
 
   lines.push('set output to ""');
@@ -171,7 +201,9 @@ function buildRemindersList(params: Record<string, unknown>): string[] {
   lines.push('on error');
   lines.push('set rDue to "none"');
   lines.push('end try');
-  lines.push('set output to output & rId & "\\t" & rName & "\\t" & rDone & "\\t" & rDue & "\\t" & rPrio & "\\n"');
+  lines.push(
+    'set output to output & rId & "\\t" & rName & "\\t" & rDone & "\\t" & rDue & "\\t" & rPrio & "\\n"',
+  );
   lines.push('end repeat');
   lines.push('return output');
   lines.push('end tell');
@@ -180,7 +212,8 @@ function buildRemindersList(params: Record<string, unknown>): string[] {
 
 function buildRemindersComplete(params: Record<string, unknown>): string[] {
   const reminderId = validateStringParam(params, 'reminder_id', 200, true)!;
-  if (!/^[A-Za-z0-9\-:\/]+$/.test(reminderId)) throw new Error('Invalid reminder_id format');
+  if (!/^[A-Za-z0-9\-:\/]+$/.test(reminderId))
+    throw new Error('Invalid reminder_id format');
 
   return [
     'tell application "Reminders"',
@@ -193,7 +226,8 @@ function buildRemindersComplete(params: Record<string, unknown>): string[] {
 
 function buildRemindersDelete(params: Record<string, unknown>): string[] {
   const reminderId = validateStringParam(params, 'reminder_id', 200, true)!;
-  if (!/^[A-Za-z0-9\-:\/]+$/.test(reminderId)) throw new Error('Invalid reminder_id format');
+  if (!/^[A-Za-z0-9\-:\/]+$/.test(reminderId))
+    throw new Error('Invalid reminder_id format');
 
   return [
     'tell application "Reminders"',
@@ -231,10 +265,16 @@ function buildNotesCreate(params: Record<string, unknown>): string[] {
   const lines: string[] = ['tell application "Notes"'];
 
   if (folder) {
-    lines.push(`set targetFolder to folder "${escapeAppleScriptString(folder)}" of default account`);
-    lines.push(`set newNote to make new note at targetFolder with properties {name:"${escapedTitle}", body:"${escapeAppleScriptString(htmlBody)}"}`);
+    lines.push(
+      `set targetFolder to folder "${escapeAppleScriptString(folder)}" of default account`,
+    );
+    lines.push(
+      `set newNote to make new note at targetFolder with properties {name:"${escapedTitle}", body:"${escapeAppleScriptString(htmlBody)}"}`,
+    );
   } else {
-    lines.push(`set newNote to make new note with properties {name:"${escapedTitle}", body:"${escapeAppleScriptString(htmlBody)}"}`);
+    lines.push(
+      `set newNote to make new note with properties {name:"${escapedTitle}", body:"${escapeAppleScriptString(htmlBody)}"}`,
+    );
   }
 
   lines.push('return id of newNote');
@@ -249,7 +289,9 @@ function buildNotesList(params: Record<string, unknown>): string[] {
   const lines: string[] = ['tell application "Notes"'];
 
   if (folder) {
-    lines.push(`set noteList to every note of folder "${escapeAppleScriptString(folder)}" of default account`);
+    lines.push(
+      `set noteList to every note of folder "${escapeAppleScriptString(folder)}" of default account`,
+    );
   } else {
     lines.push('set noteList to every note of default account');
   }
@@ -261,7 +303,9 @@ function buildNotesList(params: Record<string, unknown>): string[] {
   lines.push('set nId to id of n');
   lines.push('set nName to name of n');
   lines.push('set nDate to modification date of n as string');
-  lines.push('set output to output & nId & "\\t" & nName & "\\t" & nDate & "\\n"');
+  lines.push(
+    'set output to output & nId & "\\t" & nName & "\\t" & nDate & "\\n"',
+  );
   lines.push('set counter to counter + 1');
   lines.push('end repeat');
   lines.push('return output');
@@ -271,7 +315,8 @@ function buildNotesList(params: Record<string, unknown>): string[] {
 
 function buildNotesGet(params: Record<string, unknown>): string[] {
   const noteId = validateStringParam(params, 'note_id', 200, true)!;
-  if (!/^[A-Za-z0-9\-:\/x]+$/.test(noteId)) throw new Error('Invalid note_id format');
+  if (!/^[A-Za-z0-9\-:\/x]+$/.test(noteId))
+    throw new Error('Invalid note_id format');
 
   return [
     'tell application "Notes"',
@@ -296,6 +341,236 @@ function buildNotesListFolders(): string[] {
   ];
 }
 
+// ---------- Apple Music ----------
+
+function buildMusicPlay(params: Record<string, unknown>): string[] {
+  const track = validateStringParam(params, 'track', 500, false);
+  const playlist = validateStringParam(params, 'playlist', 200, false);
+
+  const lines: string[] = ['tell application "Music"'];
+  if (track) {
+    lines.push(
+      `set results to (search playlist "Library" for "${escapeAppleScriptString(track)}")`,
+    );
+    lines.push('if (count of results) > 0 then');
+    lines.push('play item 1 of results');
+    lines.push('set t to item 1 of results');
+    lines.push('return "Playing: " & name of t & " by " & artist of t');
+    lines.push('else');
+    lines.push(`return "No tracks found for: ${escapeAppleScriptString(track)}"`);
+    lines.push('end if');
+  } else if (playlist) {
+    lines.push(
+      `play playlist "${escapeAppleScriptString(playlist)}"`,
+    );
+    lines.push(`return "Playing playlist: ${escapeAppleScriptString(playlist)}"`);
+  } else {
+    lines.push('play');
+    lines.push('return "Playback resumed"');
+  }
+  lines.push('end tell');
+  return lines;
+}
+
+function buildMusicPause(): string[] {
+  return [
+    'tell application "Music"',
+    'pause',
+    'return "Paused"',
+    'end tell',
+  ];
+}
+
+function buildMusicStop(): string[] {
+  return [
+    'tell application "Music"',
+    'stop',
+    'return "Stopped"',
+    'end tell',
+  ];
+}
+
+function buildMusicNext(): string[] {
+  return [
+    'tell application "Music"',
+    'next track',
+    'delay 0.5',
+    'set t to current track',
+    'return "Now playing: " & name of t & " by " & artist of t & " (" & album of t & ")"',
+    'end tell',
+  ];
+}
+
+function buildMusicPrevious(): string[] {
+  return [
+    'tell application "Music"',
+    'previous track',
+    'delay 0.5',
+    'set t to current track',
+    'return "Now playing: " & name of t & " by " & artist of t & " (" & album of t & ")"',
+    'end tell',
+  ];
+}
+
+function buildMusicStatus(): string[] {
+  return [
+    'tell application "Music"',
+    'set pState to player state as string',
+    'if pState is "stopped" then',
+    'return "Player state: stopped"',
+    'end if',
+    'set t to current track',
+    'set tName to name of t',
+    'set tArtist to artist of t',
+    'set tAlbum to album of t',
+    'set tDuration to duration of t',
+    'set tPosition to player position',
+    'set vol to sound volume',
+    'set shuf to shuffling',
+    'set rep to song repeat as string',
+    'set mins to (tPosition div 60) as integer',
+    'set secs to (tPosition mod 60) as integer',
+    'set totalMins to (tDuration div 60) as integer',
+    'set totalSecs to (tDuration mod 60) as integer',
+    'if secs < 10 then set secs to "0" & secs',
+    'if totalSecs < 10 then set totalSecs to "0" & totalSecs',
+    'return "State: " & pState & "\\nTrack: " & tName & "\\nArtist: " & tArtist & "\\nAlbum: " & tAlbum & "\\nPosition: " & mins & ":" & secs & " / " & totalMins & ":" & totalSecs & "\\nVolume: " & vol & "\\nShuffle: " & shuf & "\\nRepeat: " & rep',
+    'end tell',
+  ];
+}
+
+function buildMusicVolume(params: Record<string, unknown>): string[] {
+  const level = validateNumberParam(params, 'level', 0, 100, false);
+
+  const lines: string[] = ['tell application "Music"'];
+  if (level !== undefined) {
+    lines.push(`set sound volume to ${level}`);
+    lines.push(`return "Volume set to ${level}"`);
+  } else {
+    lines.push('return "Volume: " & sound volume');
+  }
+  lines.push('end tell');
+  return lines;
+}
+
+function buildMusicSearch(params: Record<string, unknown>): string[] {
+  const query = validateStringParam(params, 'query', 200, true)!;
+  const limit = validateNumberParam(params, 'limit', 1, 50, false) ?? 10;
+
+  return [
+    'tell application "Music"',
+    `set results to (search playlist "Library" for "${escapeAppleScriptString(query)}")`,
+    'set output to ""',
+    'set counter to 0',
+    'repeat with t in results',
+    `if counter >= ${limit} then exit repeat`,
+    'set output to output & name of t & "\\t" & artist of t & "\\t" & album of t & "\\t" & (duration of t div 60) & ":" & text -2 thru -1 of ("0" & (duration of t mod 60 as integer)) & "\\n"',
+    'set counter to counter + 1',
+    'end repeat',
+    'if output is "" then return "No results found."',
+    'return output',
+    'end tell',
+  ];
+}
+
+function buildMusicQueue(params: Record<string, unknown>): string[] {
+  const track = validateStringParam(params, 'track', 500, true)!;
+
+  return [
+    'tell application "Music"',
+    `set results to (search playlist "Library" for "${escapeAppleScriptString(track)}")`,
+    'if (count of results) > 0 then',
+    'set t to item 1 of results',
+    // "play ... with once" adds to Up Next without interrupting
+    'play t with once',
+    'return "Added to Up Next: " & name of t & " by " & artist of t',
+    'else',
+    `return "No tracks found for: ${escapeAppleScriptString(track)}"`,
+    'end if',
+    'end tell',
+  ];
+}
+
+function buildMusicPlaylistList(): string[] {
+  return [
+    'tell application "Music"',
+    'set output to ""',
+    'repeat with p in every user playlist',
+    'set pName to name of p',
+    'set pCount to count of tracks of p',
+    'set pDur to duration of p',
+    'set output to output & pName & "\\t" & pCount & " tracks\\t" & (pDur div 60) & " min\\n"',
+    'end repeat',
+    'if output is "" then return "No playlists found."',
+    'return output',
+    'end tell',
+  ];
+}
+
+function buildMusicPlaylistPlay(params: Record<string, unknown>): string[] {
+  const playlist = validateStringParam(params, 'playlist', 200, true)!;
+  const shuffle = validateBooleanParam(params, 'shuffle');
+
+  const lines: string[] = ['tell application "Music"'];
+  if (shuffle !== undefined) {
+    lines.push(`set shuffling to ${shuffle}`);
+  }
+  lines.push(`play playlist "${escapeAppleScriptString(playlist)}"`);
+  lines.push(`return "Playing playlist: ${escapeAppleScriptString(playlist)}"`);
+  lines.push('end tell');
+  return lines;
+}
+
+function buildMusicShuffle(params: Record<string, unknown>): string[] {
+  const enabled = validateBooleanParam(params, 'enabled');
+
+  const lines: string[] = ['tell application "Music"'];
+  if (enabled !== undefined) {
+    lines.push(`set shuffling to ${enabled}`);
+    lines.push(`return "Shuffle: ${enabled}"`);
+  } else {
+    lines.push('return "Shuffle: " & shuffling');
+  }
+  lines.push('end tell');
+  return lines;
+}
+
+function buildMusicRepeat(params: Record<string, unknown>): string[] {
+  const mode = validateStringParam(params, 'mode', 10, true)!;
+  const validModes: Record<string, string> = {
+    off: 'off',
+    one: 'one',
+    all: 'all',
+  };
+  const asMode = validModes[mode.toLowerCase()];
+  if (!asMode) {
+    throw new Error(`Invalid repeat mode: "${mode}". Use: off, one, all`);
+  }
+
+  return [
+    'tell application "Music"',
+    `set song repeat to ${asMode}`,
+    `return "Repeat: ${asMode}"`,
+    'end tell',
+  ];
+}
+
+// ---------- Notification ----------
+
+function buildNotification(params: Record<string, unknown>): string[] {
+  const message = validateStringParam(params, 'message', 500, true)!;
+  const title = validateStringParam(params, 'title', 200, false);
+  const subtitle = validateStringParam(params, 'subtitle', 200, false);
+  const sound = validateStringParam(params, 'sound', 50, false);
+
+  let script = `display notification "${escapeAppleScriptString(message)}"`;
+  if (title) script += ` with title "${escapeAppleScriptString(title)}"`;
+  if (subtitle) script += ` subtitle "${escapeAppleScriptString(subtitle)}"`;
+  if (sound) script += ` sound name "${escapeAppleScriptString(sound)}"`;
+
+  return [script];
+}
+
 // ---------- Main dispatcher ----------
 
 export function buildAppleScript(
@@ -303,6 +578,8 @@ export function buildAppleScript(
   params: Record<string, unknown>,
 ): string[] {
   switch (command) {
+    case 'notification':
+      return buildNotification(params);
     case 'reminders_create':
       return buildRemindersCreate(params);
     case 'reminders_list':
@@ -321,6 +598,32 @@ export function buildAppleScript(
       return buildNotesGet(params);
     case 'notes_list_folders':
       return buildNotesListFolders();
+    case 'music_play':
+      return buildMusicPlay(params);
+    case 'music_pause':
+      return buildMusicPause();
+    case 'music_stop':
+      return buildMusicStop();
+    case 'music_next':
+      return buildMusicNext();
+    case 'music_previous':
+      return buildMusicPrevious();
+    case 'music_status':
+      return buildMusicStatus();
+    case 'music_volume':
+      return buildMusicVolume(params);
+    case 'music_search':
+      return buildMusicSearch(params);
+    case 'music_queue':
+      return buildMusicQueue(params);
+    case 'music_playlist_list':
+      return buildMusicPlaylistList();
+    case 'music_playlist_play':
+      return buildMusicPlaylistPlay(params);
+    case 'music_shuffle':
+      return buildMusicShuffle(params);
+    case 'music_repeat':
+      return buildMusicRepeat(params);
     default:
       throw new Error(`Unknown AppleScript command: ${command}`);
   }

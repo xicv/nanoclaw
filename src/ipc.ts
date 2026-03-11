@@ -4,7 +4,7 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, IPC_POLL_INTERVAL, MAX_MEDIA_SIZE, MEDIA_DIR, TIMEZONE } from './config.js';
 import {
   ALLOWED_APPLESCRIPT_COMMANDS,
   buildAppleScript,
@@ -13,13 +13,39 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import {
+  cleanupSentinels,
+  isDownloading,
+  isMediaDownloaded,
+  markDownloading,
+  clearDownloading,
+  resolveContainerMediaPath,
+  writeDownloadError,
+} from './media.js';
+import { MediaSendOptions, RegisteredGroup } from './types.js';
 
 // Peekaboo command timeout (30 seconds)
 const PEEKABOO_TIMEOUT = 30_000;
 
 // AppleScript command timeout (30 seconds)
 const APPLESCRIPT_TIMEOUT = 30_000;
+
+// Obsidian CLI timeout (30 seconds)
+const OBSIDIAN_TIMEOUT = 30_000;
+const OBSIDIAN_BINARY = '/Applications/Obsidian.app/Contents/MacOS/Obsidian';
+
+// Allowed Obsidian CLI subcommands (whitelist for security)
+const ALLOWED_OBSIDIAN_COMMANDS = new Set([
+  'version',
+  'vaults',
+  'files',
+  'create',
+  'read',
+  'append',
+  'daily',
+  'tasks',
+  'search',
+]);
 
 // Allowed peekaboo subcommands (whitelist for security)
 const ALLOWED_PEEKABOO_COMMANDS = new Set([
@@ -60,6 +86,8 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+  sendMedia: (jid: string, filePath: string, options?: MediaSendOptions) => Promise<void>;
+  downloadMedia: (groupFolder: string, mediaId: string) => Promise<void>;
 }
 
 let ipcWatcherRunning = false;
@@ -74,7 +102,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true });
 
+  // Opt 6: Clean up stale sentinels every 10 minutes
+  let lastSentinelCleanup = 0;
+  const SENTINEL_CLEANUP_INTERVAL = 10 * 60 * 1000;
+
   const processIpcFiles = async () => {
+    const now = Date.now();
+    if (now - lastSentinelCleanup > SENTINEL_CLEANUP_INTERVAL) {
+      lastSentinelCleanup = now;
+      try {
+        cleanupSentinels();
+      } catch (err) {
+        logger.error({ err }, 'Error cleaning up stale sentinels');
+      }
+    }
     // Scan all group IPC directories (identity determined by directory)
     let groupFolders: string[];
     try {
@@ -268,6 +309,49 @@ export function startIpcWatcher(deps: IpcDeps): void {
           'Error reading AppleScript requests directory',
         );
       }
+
+      // Process Obsidian CLI requests from this group's IPC directory
+      const obsidianRequestsDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'obsidian',
+        'requests',
+      );
+      try {
+        if (fs.existsSync(obsidianRequestsDir)) {
+          const requestFiles = fs
+            .readdirSync(obsidianRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of requestFiles) {
+            const filePath = path.join(obsidianRequestsDir, file);
+            try {
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              fs.unlinkSync(filePath);
+              // Process asynchronously — don't block the poll loop
+              processObsidianRequest(
+                data,
+                sourceGroup,
+                path.join(ipcBaseDir, sourceGroup, 'obsidian', 'responses'),
+              );
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error reading Obsidian request',
+              );
+              try {
+                fs.unlinkSync(filePath);
+              } catch {
+                // ignore cleanup error
+              }
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading Obsidian requests directory',
+        );
+      }
     }
 
     setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
@@ -285,7 +369,10 @@ function processPeekabooRequest(
   const { requestId, command, args = [] } = data;
 
   if (!requestId || !command) {
-    logger.warn({ sourceGroup, data }, 'Invalid Peekaboo request — missing fields');
+    logger.warn(
+      { sourceGroup, data },
+      'Invalid Peekaboo request — missing fields',
+    );
     return;
   }
 
@@ -330,76 +417,97 @@ function processPeekabooRequest(
     fullArgs.push('--json');
   }
 
-  execFile('peekaboo', fullArgs, { timeout: PEEKABOO_TIMEOUT }, (err, stdout, stderr) => {
-    // Peekaboo writes errors to stdout as JSON (not stderr).
-    // Some commands exit non-zero but still produce valid output.
-    // Check stdout for structured error info before falling back to stderr.
-    if (err) {
-      // If stdout has JSON output, it may contain useful data or error details
-      if (stdout && stdout.trim().startsWith('{')) {
-        try {
-          const parsed = JSON.parse(stdout);
-          if (parsed.success === false && parsed.error) {
-            logger.warn(
-              { sourceGroup, command, error: parsed.error },
-              'Peekaboo command returned error',
+  execFile(
+    'peekaboo',
+    fullArgs,
+    { timeout: PEEKABOO_TIMEOUT },
+    (err, stdout, stderr) => {
+      // Peekaboo writes errors to stdout as JSON (not stderr).
+      // Some commands exit non-zero but still produce valid output.
+      // Check stdout for structured error info before falling back to stderr.
+      if (err) {
+        // If stdout has JSON output, it may contain useful data or error details
+        if (stdout && stdout.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(stdout);
+            if (parsed.success === false && parsed.error) {
+              logger.warn(
+                { sourceGroup, command, error: parsed.error },
+                'Peekaboo command returned error',
+              );
+              writeResponse(responsesDir, requestId, {
+                requestId,
+                status: 'error',
+                error: parsed.error.message || JSON.stringify(parsed.error),
+              });
+              return;
+            }
+            // Non-zero exit but has valid output — treat as success
+            logger.info(
+              { sourceGroup, command, outputLength: stdout.length },
+              'Peekaboo command completed (non-zero exit, valid output)',
             );
             writeResponse(responsesDir, requestId, {
               requestId,
-              status: 'error',
-              error: parsed.error.message || JSON.stringify(parsed.error),
+              status: 'success',
+              output: stdout,
             });
             return;
+          } catch {
+            // JSON parse failed, fall through to generic error
           }
-          // Non-zero exit but has valid output — treat as success
-          logger.info(
-            { sourceGroup, command, outputLength: stdout.length },
-            'Peekaboo command completed (non-zero exit, valid output)',
-          );
-          writeResponse(responsesDir, requestId, {
-            requestId,
-            status: 'success',
-            output: stdout,
-          });
-          return;
-        } catch {
-          // JSON parse failed, fall through to generic error
         }
+
+        logger.error(
+          {
+            sourceGroup,
+            command,
+            err,
+            stderr,
+            stdoutPreview: stdout.slice(0, 500),
+          },
+          'Peekaboo command failed',
+        );
+        writeResponse(responsesDir, requestId, {
+          requestId,
+          status: 'error',
+          error:
+            stderr ||
+            stdout.slice(0, 500) ||
+            (err instanceof Error ? err.message : String(err)),
+        });
+        return;
       }
 
-      logger.error(
-        { sourceGroup, command, err, stderr, stdoutPreview: stdout.slice(0, 500) },
-        'Peekaboo command failed',
+      logger.info(
+        { sourceGroup, command, outputLength: stdout.length },
+        'Peekaboo command completed',
       );
       writeResponse(responsesDir, requestId, {
         requestId,
-        status: 'error',
-        error: stderr || stdout.slice(0, 500) || (err instanceof Error ? err.message : String(err)),
+        status: 'success',
+        output: stdout,
       });
-      return;
-    }
-
-    logger.info(
-      { sourceGroup, command, outputLength: stdout.length },
-      'Peekaboo command completed',
-    );
-    writeResponse(responsesDir, requestId, {
-      requestId,
-      status: 'success',
-      output: stdout,
-    });
-  });
+    },
+  );
 }
 
 function processAppleScriptRequest(
-  data: { requestId: string; command: string; params?: Record<string, unknown> },
+  data: {
+    requestId: string;
+    command: string;
+    params?: Record<string, unknown>;
+  },
   sourceGroup: string,
   responsesDir: string,
 ): void {
   const { requestId, command, params = {} } = data;
 
   if (!requestId || !command) {
-    logger.warn({ sourceGroup, data }, 'Invalid AppleScript request — missing fields');
+    logger.warn(
+      { sourceGroup, data },
+      'Invalid AppleScript request — missing fields',
+    );
     return;
   }
 
@@ -472,6 +580,96 @@ function processAppleScriptRequest(
   );
 }
 
+function processObsidianRequest(
+  data: { requestId: string; command: string; args?: string[] },
+  sourceGroup: string,
+  responsesDir: string,
+): void {
+  const { requestId, command, args = [] } = data;
+
+  if (!requestId || !command) {
+    logger.warn(
+      { sourceGroup, data },
+      'Invalid Obsidian request — missing fields',
+    );
+    return;
+  }
+
+  // Security: only allow whitelisted subcommands
+  if (!ALLOWED_OBSIDIAN_COMMANDS.has(command)) {
+    logger.warn(
+      { sourceGroup, command },
+      'Blocked disallowed Obsidian command',
+    );
+    writeResponse(responsesDir, requestId, {
+      requestId,
+      status: 'error',
+      error: `Command "${command}" is not allowed. Allowed: ${[...ALLOWED_OBSIDIAN_COMMANDS].join(', ')}`,
+    });
+    return;
+  }
+
+  // Security: reject args containing shell metacharacters
+  for (const arg of args) {
+    if (/[;&|`$(){}]/.test(arg)) {
+      logger.warn(
+        { sourceGroup, command, arg },
+        'Blocked Obsidian arg with shell metacharacters',
+      );
+      writeResponse(responsesDir, requestId, {
+        requestId,
+        status: 'error',
+        error: `Argument contains disallowed characters: ${arg}`,
+      });
+      return;
+    }
+  }
+
+  logger.info(
+    { sourceGroup, command, args },
+    'Executing Obsidian CLI command on host',
+  );
+
+  execFile(
+    OBSIDIAN_BINARY,
+    [command, ...args],
+    { timeout: OBSIDIAN_TIMEOUT },
+    (err, stdout, stderr) => {
+      // Filter out Obsidian loading warnings from stderr
+      const filteredStderr = stderr
+        .split('\n')
+        .filter((line) => !line.includes('Loading updated app package'))
+        .join('\n')
+        .trim();
+
+      if (err) {
+        logger.error(
+          { sourceGroup, command, err, stderr: filteredStderr },
+          'Obsidian CLI command failed',
+        );
+        writeResponse(responsesDir, requestId, {
+          requestId,
+          status: 'error',
+          error:
+            filteredStderr ||
+            (err instanceof Error ? err.message : String(err)),
+        });
+        return;
+      }
+
+      logger.info(
+        { sourceGroup, command, outputLength: stdout.length },
+        'Obsidian CLI command completed',
+      );
+      writeResponse(responsesDir, requestId, {
+        requestId,
+        status: 'success',
+        output: stdout,
+      });
+    },
+  );
+}
+
 function writeResponse(
   responsesDir: string,
   requestId: string,
@@ -502,6 +700,11 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // Media fields
+    mediaId?: string;
+    containerFilePath?: string;
+    caption?: string;
+    filename?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -711,6 +914,133 @@ export async function processTaskIpc(
           { data },
           'Invalid register_group request - missing required fields',
         );
+      }
+      break;
+
+    case 'media_download':
+      if (data.mediaId) {
+        if (isMediaDownloaded(sourceGroup, data.mediaId)) {
+          logger.debug(
+            { mediaId: data.mediaId, sourceGroup },
+            'Media already downloaded, skipping',
+          );
+          break;
+        }
+        // Opt 4: Download dedup with .downloading sentinel
+        if (isDownloading(sourceGroup, data.mediaId)) {
+          logger.debug(
+            { mediaId: data.mediaId, sourceGroup },
+            'Media download already in progress, skipping',
+          );
+          break;
+        }
+        markDownloading(sourceGroup, data.mediaId);
+        try {
+          await deps.downloadMedia(sourceGroup, data.mediaId);
+          logger.info(
+            { mediaId: data.mediaId, sourceGroup },
+            'Media downloaded via IPC',
+          );
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          writeDownloadError(sourceGroup, data.mediaId, errMsg);
+          logger.error(
+            { mediaId: data.mediaId, sourceGroup, err },
+            'Media download failed',
+          );
+        } finally {
+          clearDownloading(sourceGroup, data.mediaId);
+        }
+      }
+      break;
+
+    case 'media_message':
+      if (data.containerFilePath && data.chatJid) {
+        // Authorization: same pattern as text messages
+        const targetGroup = registeredGroups[data.chatJid];
+        if (
+          isMain ||
+          (targetGroup && targetGroup.folder === sourceGroup)
+        ) {
+          const hostPath = resolveContainerMediaPath(
+            data.containerFilePath,
+            sourceGroup,
+          );
+          if (!hostPath) {
+            logger.warn(
+              { containerFilePath: data.containerFilePath, sourceGroup },
+              'Invalid container media path',
+            );
+            break;
+          }
+          // Opt 3: Symlink protection — resolve symlinks and re-validate
+          let realPath: string;
+          try {
+            realPath = fs.realpathSync(hostPath);
+          } catch {
+            logger.warn(
+              { hostPath, sourceGroup },
+              'Media file not found (realpath failed)',
+            );
+            break;
+          }
+          const mediaGroupDir = path.resolve(MEDIA_DIR, sourceGroup);
+          const groupsGroupDir = path.resolve(
+            path.dirname(MEDIA_DIR),
+            '..',
+            'groups',
+            sourceGroup,
+          );
+          if (
+            !realPath.startsWith(mediaGroupDir + path.sep) &&
+            realPath !== mediaGroupDir &&
+            !realPath.startsWith(groupsGroupDir + path.sep) &&
+            realPath !== groupsGroupDir
+          ) {
+            logger.warn(
+              { hostPath, realPath, sourceGroup },
+              'Media path escapes allowed directories after symlink resolution',
+            );
+            break;
+          }
+          // Opt 7: Size validation on send
+          try {
+            const stat = fs.statSync(realPath);
+            if (stat.size > MAX_MEDIA_SIZE) {
+              logger.warn(
+                { realPath, size: stat.size, maxSize: MAX_MEDIA_SIZE },
+                'Media file too large to send',
+              );
+              break;
+            }
+          } catch {
+            logger.warn(
+              { realPath, sourceGroup },
+              'Media file not found (stat failed)',
+            );
+            break;
+          }
+          try {
+            await deps.sendMedia(data.chatJid, realPath, {
+              caption: data.caption,
+              filename: data.filename,
+            });
+            logger.info(
+              { chatJid: data.chatJid, sourceGroup },
+              'Media sent via IPC',
+            );
+          } catch (err) {
+            logger.error(
+              { chatJid: data.chatJid, sourceGroup, err },
+              'Media send failed',
+            );
+          }
+        } else {
+          logger.warn(
+            { chatJid: data.chatJid, sourceGroup },
+            'Unauthorized media send attempt blocked',
+          );
+        }
       }
       break;
 

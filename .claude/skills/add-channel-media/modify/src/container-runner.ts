@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, execFile, spawn } from 'child_process';
+import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -22,7 +22,7 @@ import { logger } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
   readonlyMountArgs,
-  stopContainerArgs,
+  stopContainer,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
@@ -75,10 +75,16 @@ function buildVolumeMounts(
       readonly: true,
     });
 
-    // Note: .env shadowing is skipped because Apple Container does not support
-    // file-level bind mounts (only directories). The project root is already
-    // mounted read-only, and secrets are passed via stdin (see readSecrets()),
-    // so the agent can at most read — not modify — the .env file.
+    // Shadow .env so the agent cannot read secrets from the mounted project root.
+    // Secrets are passed via stdin instead (see readSecrets()).
+    const envFile = path.join(projectRoot, '.env');
+    if (fs.existsSync(envFile)) {
+      mounts.push({
+        hostPath: '/dev/null',
+        containerPath: '/workspace/project/.env',
+        readonly: true,
+      });
+    }
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -162,18 +168,6 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'peekaboo', 'requests'), {
-    recursive: true,
-  });
-  fs.mkdirSync(path.join(groupIpcDir, 'peekaboo', 'responses'), {
-    recursive: true,
-  });
-  fs.mkdirSync(path.join(groupIpcDir, 'applescript', 'requests'), {
-    recursive: true,
-  });
-  fs.mkdirSync(path.join(groupIpcDir, 'applescript', 'responses'), {
-    recursive: true,
-  });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -189,11 +183,9 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Sync agent-runner source into a per-group writable location so agents
+  // Copy agent-runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other
   // groups. Recompiled on container startup via entrypoint.sh.
-  // Always sync core files from upstream to pick up new MCP tools/fixes,
-  // while preserving any agent-added customizations in other files.
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
@@ -206,15 +198,8 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (fs.existsSync(agentRunnerSrc)) {
-    fs.mkdirSync(groupAgentRunnerDir, { recursive: true });
-    // Sync upstream source files (overwrite with latest)
-    for (const file of fs.readdirSync(agentRunnerSrc)) {
-      const srcFile = path.join(agentRunnerSrc, file);
-      if (fs.statSync(srcFile).isFile()) {
-        fs.copyFileSync(srcFile, path.join(groupAgentRunnerDir, file));
-      }
-    }
+  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
@@ -433,8 +418,7 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
-      const [bin, args] = stopContainerArgs(containerName);
-      execFile(bin, args, { timeout: 15000 }, (err) => {
+      exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn(
             { group: group.name, containerName, err },
