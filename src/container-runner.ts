@@ -15,12 +15,14 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MEDIA_DIR,
+  PINCHTAB_PORT,
+  PINCHTAB_TOKEN,
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
-  CONTAINER_HOST_GATEWAY,
+  getContainerHostGateway,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
   readonlyMountArgs,
@@ -246,10 +248,19 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Route browser traffic through host-side pinchtab service
+  args.push(
+    '-e',
+    `PINCHTAB_URL=http://${getContainerHostGateway()}:${PINCHTAB_PORT}`,
+  );
+  if (PINCHTAB_TOKEN) {
+    args.push('-e', `PINCHTAB_TOKEN=${PINCHTAB_TOKEN}`);
+  }
+
   // Route API traffic through the credential proxy (containers never see real secrets)
   args.push(
     '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    `ANTHROPIC_BASE_URL=http://${getContainerHostGateway()}:${CREDENTIAL_PROXY_PORT}`,
   );
 
   // Mirror the host's auth method with a placeholder value.

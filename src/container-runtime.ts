@@ -11,20 +11,69 @@ import { logger } from './logger.js';
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'container';
 
-/** Hostname containers use to reach the host machine. */
+/**
+ * Hostname/IP containers use to reach the host machine.
+ * Docker Desktop: host.docker.internal (resolved by VM networking).
+ * Apple Container: bridge100 IP (host.docker.internal is not supported,
+ *   and --add-host is not available).
+ * Linux: host.docker.internal (added via --add-host in hostGatewayArgs).
+ *
+ * Lazy-detected: bridge100 only exists after `container system start`,
+ * so we detect on first access rather than at import time.
+ */
+let _cachedHostGateway: string | null = null;
+
+export function getContainerHostGateway(): string {
+  if (_cachedHostGateway) return _cachedHostGateway;
+  _cachedHostGateway = detectHostGateway();
+  return _cachedHostGateway;
+}
+
+/** @deprecated Use getContainerHostGateway() — kept for backwards compat */
 export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
+
+/** Default vmnet gateway used by Apple Container (visible inside the VM). */
+const APPLE_CONTAINER_GATEWAY = '192.168.64.1';
+
+function detectHostGateway(): string {
+  if (os.platform() === 'darwin' && CONTAINER_RUNTIME_BIN === 'container') {
+    // Apple Container: vmnet gateway is always 192.168.64.1.
+    // The host has no visible interface for this IP — vmnet handles it internally.
+    return APPLE_CONTAINER_GATEWAY;
+  }
+  return 'host.docker.internal';
+}
 
 /**
  * Address the credential proxy binds to.
  * Docker Desktop (macOS): 127.0.0.1 — the VM routes host.docker.internal to loopback.
+ * Apple Container (macOS): bridge100 IP — containers reach the host via the vmnet bridge.
  * Docker (Linux): bind to the docker0 bridge IP so only containers can reach it,
  *   falling back to 0.0.0.0 if the interface isn't found.
  */
+let _cachedProxyBindHost: string | null = null;
+
+export function getProxyBindHost(): string {
+  if (_cachedProxyBindHost) return _cachedProxyBindHost;
+  _cachedProxyBindHost =
+    process.env.CREDENTIAL_PROXY_HOST || detectProxyBindHost();
+  return _cachedProxyBindHost;
+}
+
+/** @deprecated Use getProxyBindHost() — kept for backwards compat */
 export const PROXY_BIND_HOST =
-  process.env.CREDENTIAL_PROXY_HOST || detectProxyBindHost();
+  process.env.CREDENTIAL_PROXY_HOST || '127.0.0.1';
 
 function detectProxyBindHost(): string {
-  if (os.platform() === 'darwin') return '127.0.0.1';
+  if (os.platform() === 'darwin') {
+    // Apple Container: vmnet gateway (192.168.64.1) is not a real host interface,
+    // so we must bind to 0.0.0.0 for the container to reach us.
+    if (CONTAINER_RUNTIME_BIN === 'container') {
+      return '0.0.0.0';
+    }
+    // Docker Desktop: loopback works via host.docker.internal VM routing
+    return '127.0.0.1';
+  }
 
   // WSL uses Docker Desktop (same VM routing as macOS) — loopback is correct.
   // Check /proc filesystem, not env vars — WSL_DISTRO_NAME isn't set under systemd.
