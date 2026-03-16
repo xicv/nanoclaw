@@ -129,19 +129,22 @@ describe('formatMessages with attachments', () => {
   const TZ = 'UTC';
 
   it('includes attachment elements with size', () => {
-    const result = formatMessages([
-      makeMsg({
-        content: 'Check this photo',
-        attachments: [
-          {
-            id: 'whatsapp:media:123',
-            filename: 'photo.jpg',
-            mimetype: 'image/jpeg',
-            size: 54321,
-          },
-        ],
-      }),
-    ], TZ);
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: 'Check this photo',
+          attachments: [
+            {
+              id: 'whatsapp:media:123',
+              filename: 'photo.jpg',
+              mimetype: 'image/jpeg',
+              size: 54321,
+            },
+          ],
+        }),
+      ],
+      TZ,
+    );
     expect(result).toContain('<attachment id="whatsapp:media:123"');
     expect(result).toContain('name="photo.jpg"');
     expect(result).toContain('type="image/jpeg"');
@@ -149,63 +152,75 @@ describe('formatMessages with attachments', () => {
   });
 
   it('includes multiple attachments', () => {
-    const result = formatMessages([
-      makeMsg({
-        content: 'Files',
-        attachments: [
-          { id: 'a:media:1', filename: 'a.jpg', mimetype: 'image/jpeg' },
-          { id: 'a:media:2', filename: 'b.pdf', mimetype: 'application/pdf' },
-        ],
-      }),
-    ], TZ);
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: 'Files',
+          attachments: [
+            { id: 'a:media:1', filename: 'a.jpg', mimetype: 'image/jpeg' },
+            { id: 'a:media:2', filename: 'b.pdf', mimetype: 'application/pdf' },
+          ],
+        }),
+      ],
+      TZ,
+    );
     expect(result).toContain('id="a:media:1"');
     expect(result).toContain('id="a:media:2"');
   });
 
   it('omits size when undefined', () => {
-    const result = formatMessages([
-      makeMsg({
-        content: 'No size',
-        attachments: [
-          {
-            id: 'x:media:1',
-            filename: 'f.bin',
-            mimetype: 'application/octet-stream',
-          },
-        ],
-      }),
-    ], TZ);
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: 'No size',
+          attachments: [
+            {
+              id: 'x:media:1',
+              filename: 'f.bin',
+              mimetype: 'application/octet-stream',
+            },
+          ],
+        }),
+      ],
+      TZ,
+    );
     expect(result).not.toContain('size=');
   });
 
   it('escapes special characters in attributes', () => {
-    const result = formatMessages([
-      makeMsg({
-        content: 'test',
-        attachments: [
-          { id: 'x:media:1', filename: 'a&b<c>.jpg', mimetype: 'image/jpeg' },
-        ],
-      }),
-    ], TZ);
+    const result = formatMessages(
+      [
+        makeMsg({
+          content: 'test',
+          attachments: [
+            { id: 'x:media:1', filename: 'a&b<c>.jpg', mimetype: 'image/jpeg' },
+          ],
+        }),
+      ],
+      TZ,
+    );
     expect(result).toContain('name="a&amp;b&lt;c&gt;.jpg"');
   });
 
   it('formats mixed text and media messages correctly', () => {
-    const result = formatMessages([
-      makeMsg({ id: '1', content: 'plain text' }),
-      makeMsg({
-        id: '2',
-        content: 'with media',
-        attachments: [
-          {
-            id: 'w:media:1',
-            filename: 'pic.png',
-            mimetype: 'image/png',
-            size: 100,
-          },
-        ],
-      }),
-    ], TZ);
+    const result = formatMessages(
+      [
+        makeMsg({ id: '1', content: 'plain text' }),
+        makeMsg({
+          id: '2',
+          content: 'with media',
+          attachments: [
+            {
+              id: 'w:media:1',
+              filename: 'pic.png',
+              mimetype: 'image/png',
+              size: 100,
+            },
+          ],
+        }),
+      ],
+      TZ,
+    );
     expect(result).toContain('>plain text</message>');
     expect(result).toContain('<attachment id="w:media:1"');
   });

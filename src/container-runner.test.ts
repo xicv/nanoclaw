@@ -16,6 +16,8 @@ vi.mock('./config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   MEDIA_DIR: '/tmp/nanoclaw-test-data/media',
+  PINCHTAB_PORT: 9867,
+  PINCHTAB_TOKEN: '',
   TIMEZONE: 'America/Los_Angeles',
 }));
 
