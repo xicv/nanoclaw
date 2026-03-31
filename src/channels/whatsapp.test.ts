@@ -485,6 +485,45 @@ describe('WhatsAppChannel', () => {
       );
     });
 
+    it('includes quoted message context when replying', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-reply-1',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            extendedTextMessage: {
+              text: 'Find links for these activities',
+              contextInfo: {
+                quotedMessage: {
+                  conversation: 'Daily briefing | March 30',
+                },
+                participant: '5559999@s.whatsapp.net',
+              },
+            },
+          },
+          pushName: 'Alice',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content:
+            '[Replying to: "Daily briefing | March 30"]\nFind links for these activities',
+        }),
+      );
+    });
+
     it('processes image with caption via processInboundMedia', async () => {
       vi.mocked(processInboundMedia).mockReturnValueOnce({
         content: 'Check this photo',

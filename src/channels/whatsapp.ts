@@ -251,13 +251,32 @@ export class WhatsAppChannel implements Channel {
             break;
           }
 
-          const content =
+          // Extract quoted/replied-to message context
+          let quotedPrefix = '';
+          const contextInfo = normalized.extendedTextMessage?.contextInfo;
+          if (contextInfo?.quotedMessage) {
+            const quotedNorm = normalizeMessageContent(contextInfo.quotedMessage);
+            const quotedText =
+              quotedNorm?.conversation ||
+              quotedNorm?.extendedTextMessage?.text ||
+              quotedNorm?.imageMessage?.caption ||
+              quotedNorm?.videoMessage?.caption ||
+              '';
+            if (quotedText) {
+              const truncated = quotedText.length > 500 ? quotedText.slice(0, 500) + '…' : quotedText;
+              quotedPrefix = `[Replying to: "${truncated}"]\n`;
+            }
+          }
+
+          const rawContent =
             mediaResult?.content ||
             normalized.conversation ||
             normalized.extendedTextMessage?.text ||
             normalized.imageMessage?.caption ||
             normalized.videoMessage?.caption ||
             '';
+
+          const content = quotedPrefix + rawContent;
 
           // Skip protocol messages with no text content and no media
           if (!content) continue;
