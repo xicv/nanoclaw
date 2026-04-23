@@ -43,6 +43,10 @@ export function startCredentialProxy(
   );
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
+  // Preserve any path prefix on ANTHROPIC_BASE_URL (e.g. z.ai's
+  // "/api/anthropic"). Without this, requests to /v1/messages would
+  // be forwarded to api.z.ai/v1/messages and return 404.
+  const upstreamPathPrefix = upstreamUrl.pathname.replace(/\/$/, '');
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -83,12 +87,23 @@ export function startCredentialProxy(
           {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
+            path: `${upstreamPathPrefix}${req.url}`,
             method: req.method,
             headers,
           } as RequestOptions,
           (upRes) => {
             res.writeHead(upRes.statusCode!, upRes.headers);
+            // Response-body errors (e.g. read ETIMEDOUT after headers) don't
+            // fire 'error' on the request; they fire on upRes. Without this
+            // handler, pipe silently stops and the client socket hangs,
+            // surfacing as UND_ERR_SOCKET in the container-side SDK.
+            upRes.on('error', (err) => {
+              logger.error(
+                { err, url: req.url },
+                'Credential proxy upstream stream error',
+              );
+              res.destroy(err);
+            });
             upRes.pipe(res);
           },
         );
@@ -101,6 +116,8 @@ export function startCredentialProxy(
           if (!res.headersSent) {
             res.writeHead(502);
             res.end('Bad Gateway');
+          } else {
+            res.destroy(err);
           }
         });
 

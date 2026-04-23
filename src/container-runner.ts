@@ -29,6 +29,7 @@ import {
   stopContainerArgs,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -272,6 +273,26 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Forward per-tier model overrides from .env so the agent can target
+  // third-party Anthropic-compatible endpoints (e.g. z.ai glm-5.1).
+  // Claude Code's --model flag only accepts known aliases (sonnet/opus/haiku),
+  // then maps them to the actual upstream model via these env vars.
+  const modelOverrides = readEnvFile([
+    'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  ]);
+  for (const [key, value] of Object.entries(modelOverrides)) {
+    args.push('-e', `${key}=${value}`);
+  }
+
+  // When targeting a non-Anthropic endpoint, suppress Claude Code's background
+  // traffic (model verification probes, telemetry) so it doesn't fail against
+  // a proxy that only implements /v1/messages.
+  if (Object.keys(modelOverrides).length > 0) {
+    args.push('-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1');
   }
 
   // Runtime-specific args for host gateway resolution
